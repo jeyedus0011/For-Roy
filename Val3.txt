@@ -1,0 +1,281 @@
+/**
+ * 
+ */
+package com.affinion.it.print.recordprocessor.validator.pg;
+
+import infrastructure.print.xml.common.AddressType;
+import infrastructure.print.xml.common.CustomerType;
+
+import java.io.StringWriter;
+import java.math.BigDecimal;
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.Map;
+
+import javax.xml.bind.JAXBContext;
+import javax.xml.bind.JAXBElement;
+import javax.xml.bind.JAXBException;
+import javax.xml.bind.Marshaller;
+import javax.xml.namespace.QName;
+
+import org.xml.sax.SAXException;
+
+import product.pg2.xml.outbound.nohit.print.MemberInfoType;
+import product.pg2.xml.outbound.nohit.print.PG2MonNoHitsPrintRecord;
+import product.pg2.xml.outbound.nohit.print.PrintRecordDataType;
+
+import com.affinion.it.print.common.exception.PrintException;
+import com.affinion.it.print.common.logging.Logger;
+import com.affinion.it.print.common.util.PrintConstants;
+import com.affinion.it.print.common.util.StringUtil;
+import com.affinion.it.print.common.util.xml.JAXBHelper;
+import com.affinion.it.print.jpa.entity.PrintRecord;
+import com.affinion.it.print.jpa.entity.PrintRecordExtn;
+import com.affinion.it.print.recordprocessor.common.service.AbstractRecordProcessorValidator;
+import com.affinion.it.print.recordprocessor.common.util.RecordProcessorConstants;
+import com.affinion.it.print.recordprocessor.common.util.exception.RecordProcessorException;
+import com.affinion.it.print.recordprocessor.common.vo.PrintData;
+
+/**
+ * @author m1003456
+ *
+ */
+public class MonNoHitsValidator extends AbstractRecordProcessorValidator {
+
+private static transient Logger logger = new Logger(MonNoHitsValidator.class,RecordProcessorConstants.APPLICATION_NAME);
+	
+	private Collection<String> errors;
+
+	
+	/* (non-Javadoc)
+	 * @see com.affinion.it.print.recordprocessor.common.service.AbstractRecordProcessorValidator#mapPrintData(java.lang.String, java.util.Map)
+	 */
+	@Override
+	public PrintData mapPrintData(String message,Map<String, String> jmsProperties) throws PrintException,JAXBException, SAXException {
+		PrintData printData = new PrintData();
+		PG2MonNoHitsPrintRecord reqDoc = null;
+		reqDoc = getJaxbFromString(message, jmsProperties);
+		AddressType addressType = this.getAddressType(reqDoc);
+		CustomerType customerType = this.getCustomerType(reqDoc);
+		PrintRecord printRecord = new PrintRecord();
+		printRecord = this.getAddressType(addressType, printRecord);
+		printRecord = this.getCustomerType(customerType, printRecord);
+		printRecord.setVendorFfmtCode(this.getVendorFfmtCode(reqDoc));
+		printData.setPrintRecordExtn(this.getPrintRecordExtn(reqDoc, customerType));		
+		printData.setPrintPayload(getPayload(reqDoc.getPrintRecordDatas().get(0)));
+		printData.setRawPayload(message);
+		printData.setPrintRecord(printRecord);
+		validate(reqDoc);
+		printData.setErrors(errors);
+		return printData;
+	}
+	
+	 /**
+		 * 
+		 * @param message
+		 * @return
+		 * @throws JAXBException
+		 * @throws SAXException 
+		 */
+	private PG2MonNoHitsPrintRecord getJaxbFromString(String message, Map<String, String> jmsProperties) throws JAXBException, SAXException {
+		String schema = jmsProperties.get(PrintConstants.PRINT_SCHEMA);		
+		return (PG2MonNoHitsPrintRecord)JAXBHelper.unmarshal(message, PG2MonNoHitsPrintRecord.class,schema);
+	}
+		
+		/**
+		 * 
+		 * @param payload
+		 * @return
+		 * @throws JAXBException
+		 */
+	private String getPayload(PrintRecordDataType payload) throws JAXBException {
+		StringWriter sw = new StringWriter();
+		JAXBContext jaxbContext = JAXBHelper.retrieveJAXBContext(PrintRecordDataType.class);
+		Marshaller marshaller = jaxbContext.createMarshaller();
+		marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
+		marshaller.setProperty(Marshaller.JAXB_FRAGMENT, true);
+		marshaller.setProperty(Marshaller.JAXB_ENCODING, PrintConstants.CHAR_ENCODING);
+		JAXBElement<PrintRecordDataType> jaxbElement = new JAXBElement<PrintRecordDataType>(new QName(null, "PrintRecordDataType"), PrintRecordDataType.class, payload);
+		marshaller.marshal(jaxbElement, sw);
+		return sw.toString();
+	}
+		
+	 public void validate(PG2MonNoHitsPrintRecord record) {
+    	errors = new LinkedHashSet<String>();
+    	try {
+			errors.clear();
+			PrintRecordDataType printRecord = record.getPrintRecordDatas().get(0);
+			//validate MemberInfo
+			validateMemberInfo(printRecord);
+			//validate Address
+			validateAddress(printRecord.getMemberInfo().getAddress());					
+			//validating PrintRecord
+            validateDCERequiredFields(printRecord);
+            // if there are errors throw it back to the caller		            
+             if ( ! "EN_MX".equalsIgnoreCase(printRecord.getLanguage().trim()) && !"EN_US".equalsIgnoreCase(printRecord.getLanguage().trim()) && ! "ES_MX".equalsIgnoreCase(printRecord.getLanguage().trim())) 
+                  errors.add(" Language field value should be either EN_MX or ES_MX or EN_US ");
+		} catch (Exception ex) {
+			logger.error("Exception validating Request in Validator ", ex);
+			errors.add(ex.getMessage());
+		}
+	    }
+	 
+	 private void validateMemberInfo(PrintRecordDataType record){
+		 	//First Name
+		    if (StringUtil.isNull(record.getMemberInfo().getFirstName())) {
+		        errors.add(RecordProcessorConstants.PG_DM_ERROR_MSG_HEADER + RecordProcessorConstants.MEMFN_ERR_MSG);
+		    }else{
+		    	if(StringUtil.isNumeric(record.getMemberInfo().getFirstName())){
+	                errors.add(RecordProcessorConstants.PG_NOHIT_ERROR_MSG_HEADER + RecordProcessorConstants.MEMFN_INT_ERR_MSG);
+	            }
+		    }
+		    //Last Name
+		    if (StringUtil.isNull(record.getMemberInfo().getLastName())) {
+		        errors.add(RecordProcessorConstants.PG_DM_ERROR_MSG_HEADER + RecordProcessorConstants.MEMLN_ERR_MSG);
+		    }else{
+		    	if(StringUtil.isNumeric(record.getMemberInfo().getLastName())){
+	                errors.add(RecordProcessorConstants.PG_NOHIT_ERROR_MSG_HEADER + RecordProcessorConstants.MEMLN_INT_ERR_MSG);
+	            }
+		    }
+	    }
+		 
+		 //Common Address Type
+	    private void validateAddress(AddressType obj){
+	    	//Address1 && Address2
+	        if(StringUtil.isNull(obj.getAddress1()) && StringUtil.isNull(obj.getAddress2()) && StringUtil.isNull(obj.getAddress3())){
+	            errors.add(RecordProcessorConstants.PG_DM_ERROR_MSG_HEADER + RecordProcessorConstants.CMN_ADDRES_LINES_ERR_MSG);
+	        }
+	        //City
+	        if(StringUtil.isNull(obj.getCity())) {
+	            errors.add(RecordProcessorConstants.PG_DM_ERROR_MSG_HEADER + RecordProcessorConstants.CMN_ADDRES_CITY_ERR_MSG);
+	        }
+	        //state
+	        if(StringUtil.isNull(obj.getStateProvince())) {
+	            errors.add(RecordProcessorConstants.PG_DM_ERROR_MSG_HEADER + RecordProcessorConstants.CMN_ADDRES_STATE_ERR_MSG);
+	        }
+	        //zipcode
+	        if(StringUtil.isNull(obj.getPostalCode())) {
+	            errors.add(RecordProcessorConstants.PG_DM_ERROR_MSG_HEADER + RecordProcessorConstants.CMN_ADDRES_ZIPCODE_ERR_MSG);
+	        }
+	        else {
+	            try {
+	               Integer.parseInt(obj.getPostalCode());
+	            }catch(Exception e) {
+	                errors.add(RecordProcessorConstants.PG_DM_ERROR_MSG_HEADER + RecordProcessorConstants.CMN_ADDRES_ZIPCODE_INVALID_ERR_MSG);
+	            }
+	        }
+	    }
+		    
+	    private void validateDCERequiredFields(PrintRecordDataType obj)
+		    {
+		        if (StringUtil.isNull(obj.getMemberNumber())) {
+		            errors.add(RecordProcessorConstants.PG_NOHIT_ERROR_MSG_HEADER + RecordProcessorConstants.MEMNUB_ERR_MSG);
+		        }
+		        SimpleDateFormat formatter = new SimpleDateFormat(RecordProcessorConstants.DATE_FORMAT_1);
+		        String startDate = formatter.format(obj.getStartDate().getTime());
+		        if (!validateDate(startDate,RecordProcessorConstants.DATE_FORMAT_1)){
+		            errors.add(RecordProcessorConstants.PG_NOHIT_ERROR_MSG_HEADER + RecordProcessorConstants.PG_STARTDATE_FORMAT_ERR_MSG + obj.getStartDate());
+		        }
+		        String endDate = formatter.format(obj.getEndDate().getTime());
+		        if(!validateDate(endDate,RecordProcessorConstants.DATE_FORMAT_1)){
+		            errors.add(RecordProcessorConstants.PG_NOHIT_ERROR_MSG_HEADER + RecordProcessorConstants.PG_ENDDATE_FORMAT_ERR_MSG + obj.getEndDate());
+		        }
+		    }
+		    
+
+		private boolean validateDate(String inputDate , String name ) { 
+			boolean result = false;
+			if (inputDate !=null && !StringUtil.isNull(inputDate) && !"".equalsIgnoreCase(inputDate.trim())) {
+				try {
+					SimpleDateFormat d = new SimpleDateFormat(name);
+					d.parse(inputDate);
+					result = true;
+				} catch(Exception e) {
+					errors.add(name +" is not a valid Date");
+					result = false;
+				}
+			}
+			return result;
+		}
+		
+			   /*
+			 * Since FAMS-3BQU is XML File based integration, Address Information is
+			 * pulled from the payload, and passed to
+			 * infrastructure.print.xml.common.AddressType. This value will be populated
+			 * in the, PRINT_SRV.PRINT_RECORD table.
+			 */
+		private AddressType getAddressType(PG2MonNoHitsPrintRecord object) throws PrintException {
+			return object.getPrintRecordDatas().get(0).getMemberInfo().getAddress();
+		}
+		
+			/*
+			 * Since FAMS-3BQU is XML File based integration, Customer Information is
+			 * pulled from the payload, and passed to
+			 * infrastructure.print.xml.common.CustomerType. This value will be
+			 * populated in the, PRINT_SRV.PRINT_RECORD table.
+			 */
+		private CustomerType getCustomerType(PG2MonNoHitsPrintRecord object) throws PrintException {
+			PG2MonNoHitsPrintRecord prType = object;
+			CustomerType ct = prType.getCustomer();
+			if(null==ct ){
+				ct = new CustomerType();
+			}
+			MemberInfoType mit = prType.getPrintRecordDatas().get(0).getMemberInfo();
+			StringBuffer customerName = new StringBuffer(mit.getFirstName());
+			ct.setCustomerName(customerName.append(" ").append(mit.getLastName()).toString());
+			ct.setCustomerID(prType.getPrintRecordDatas().get(0).getMemberNumber());
+			ct.setCustomerIDType(RecordProcessorConstants.CUSTOMER_ID_TYPE);
+			return ct;
+		}
+			
+		private String getVendorFfmtCode(PG2MonNoHitsPrintRecord object) throws PrintException {
+			if(!StringUtil.isNull(object.getPrintRecordDatas().get(0).getFulCode())){
+				return object.getPrintRecordDatas().get(0).getFulCode();	
+			}else{
+				return object.getPrintRecordDatas().get(0).getVariant();
+			}
+		}
+			
+		private PrintRecordExtn getPrintRecordExtn(PG2MonNoHitsPrintRecord object, CustomerType customerType) throws PrintException {
+			PrintRecordExtn recordExtn = new PrintRecordExtn();
+			PG2MonNoHitsPrintRecord record = (PG2MonNoHitsPrintRecord) object;
+			PrintRecordDataType printRecordDataType = record.getPrintRecordDatas().get(0);
+			if (null != printRecordDataType) {
+				if (!StringUtil.isNull(printRecordDataType.getProductSKU())) {
+					recordExtn.setGenericAttribute2(record.getPrintRecordDatas().get(0).getProductSKU());
+				}
+				if (!StringUtil.isNull(printRecordDataType.getLanguage())) {
+					recordExtn.setGenericAttribute3(record.getPrintRecordDatas().get(0).getLanguage());
+				}
+				if (!StringUtil.isNull(printRecordDataType.getBenefitServicingVendor())) {
+					recordExtn.setGenericAttribute8(record.getPrintRecordDatas().get(0).getBenefitServicingVendor().trim());
+				}
+				if (!StringUtil.isNull(printRecordDataType.getServiceCode())) {
+					recordExtn.setGenericAttribute9(record.getPrintRecordDatas().get(0).getServiceCode().trim());
+				}
+				if (!StringUtil.isNull(printRecordDataType.getReferenceNumber())) {
+					BigDecimal num = new BigDecimal(printRecordDataType.getReferenceNumber());
+					recordExtn.setGenericNumber3(num);
+				}
+			}
+			if (customerType != null && customerType.getCustomerID() != null && customerType.getCustomerID().trim() != null) {
+				recordExtn.setGenericAttribute11(customerType.getCustomerID());
+			}
+			if (customerType != null && customerType.getCustomerRequestID() != null && customerType.getCustomerRequestID().trim() != null) {
+				recordExtn.setGenericAttribute12(customerType.getCustomerRequestID().toUpperCase());
+			}
+			if (customerType != null && customerType.getCustomerRequestIDType() != null && customerType.getCustomerRequestIDType().trim() != null) {
+				recordExtn.setGenericAttribute13(customerType.getCustomerRequestIDType().toUpperCase());
+			}
+			return recordExtn;
+		}
+
+		@Override
+		public Calendar getTargetDate(int numDays) throws RecordProcessorException {
+			// TODO Auto-generated method stub
+			return null;
+		}
+
+}

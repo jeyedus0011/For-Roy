@@ -1,0 +1,47 @@
+/**
+ * 
+ */
+package com.affinion.it.print.fileprocessor.validator;
+
+import java.io.BufferedReader;
+import java.util.HashMap;
+import java.util.Map;
+
+import javax.xml.stream.XMLStreamException;
+
+import com.affinion.it.print.common.logging.Logger;
+import com.affinion.it.print.fileprocessor.common.exception.FileValidationException;
+import com.affinion.it.print.fileprocessor.common.util.FileProcessorConstants;
+import com.affinion.it.print.fileprocessor.common.util.XmlFileReader;
+
+/**
+ * @author m1003456
+ *
+ */
+public class MonHitsFileValidator implements FileValidator {
+
+	private static Logger logger = new Logger(MonHitsFileValidator.class, FileProcessorConstants.APPLICATION_NAME);
+	 private static final String ERROR_START = "## PG2DM Validator Error - ";
+	    private static final String repeaterElement = "PrintRecordData";
+	/* (non-Javadoc)
+	 * @see com.affinion.it.print.fileprocessor.validator.FileValidator#validate(java.io.BufferedReader)
+	 */
+	@Override
+	public Map<String, String> validate(BufferedReader reader)
+			throws FileValidationException {
+		Map<String, String> result = new HashMap<String, String>();
+		int count = 0;
+		try {
+			if (reader != null) {
+				XmlFileReader xfr = new XmlFileReader(reader, repeaterElement);
+				count = xfr.recordCount();
+			}
+		} catch (XMLStreamException xse) {
+			logger.error(ERROR_START + "Xml Stream Exception: " + xse.getCause());
+			throw new FileValidationException(ERROR_START + "Xml Stream Exception: " + xse.getCause());
+		}
+		result.put(RECORD_COUNT, String.valueOf(count));
+		return result;
+	}
+
+}

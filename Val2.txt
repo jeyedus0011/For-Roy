@@ -1,0 +1,368 @@
+/**
+ * 
+ */
+package com.affinion.it.print.fileprocessor.recordreader;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
+
+import com.affinion.it.print.common.logging.Logger;
+import com.affinion.it.print.common.util.StringUtil;
+import com.affinion.it.print.fileprocessor.common.exception.RecordReaderException;
+import com.affinion.it.print.fileprocessor.common.util.CommonValidationUtil;
+import com.affinion.it.print.fileprocessor.common.util.FileProcessorConstants;
+import com.affinion.it.print.fileprocessor.common.util.FileProcessorUtil;
+
+/**
+ * @author m1003456
+ *
+ */
+public class MonNoHitsRecordReader implements RecordReader {
+
+	private static Logger logger = new Logger(MonNoHitsRecordReader.class, FileProcessorConstants.APPLICATION_NAME);
+    private BufferedReader _bufferedReader;    
+    private static final String recordName = "PrintRecordData"; 
+    private static final String addressElementName = "Address";
+    private static final String customerElementName = "Customer";
+    private static final String fulCode= "FulCode";
+    boolean validate;
+    private StringBuffer recordErrors = new StringBuffer();
+    private XMLStreamReader parser;       
+    private StringBuffer startSB = new StringBuffer();
+    private StringBuffer endSB = new StringBuffer();
+    private boolean rootElement = true;
+    private boolean inBetween = false;
+    private boolean commonElements = false;
+    private boolean commonInBetween = false;
+    boolean foundFulCodeNode=false;
+    
+    
+    /**
+	 * This method returns a xml record in a string format. This method calls
+	 * the xmlFileReader method to split the records. If any validation fails it
+	 * throws record reader exception, with the original record and the custom
+	 * message.
+	 * 
+	 * @param
+	 * @return String
+	 * @throws IOException
+	 * @throws RecordReaderException
+	 */
+public String readRecord() throws RecordReaderException, IOException {
+	String record = null;
+	String message = null;
+
+	try {
+		while ((record = xmlReadRecord()) != null) {
+			message = this.recordErrors.toString();
+			this.recordErrors = new StringBuffer();
+			if (!StringUtil.isNull(message)) {
+				this.validate = true;
+				throw new RecordReaderException(record, message);
+			} else {
+				this.validate = false;
+				//record = FileProcessorUtil.escapeText(record);
+				return record;
+			}
+		}
+	} catch (Exception xse) {
+		logger.error(xse.getMessage());
+		if (validate) {
+			throw new RecordReaderException(record, message);
+		} else {
+			throw new RecordReaderException("Xml Stream Exception: " + xse.getCause());
+		}
+	}
+	return record;
+}
+
+ /**
+ * This method set the reader to the instance variable _buffered reader.
+ * @param reader
+ * @return 
+ */
+@Override
+
+public void setBufferedReader(BufferedReader reader)  {
+	this._bufferedReader = reader;
+	
+	 try { 
+		 xmlFileReader(this._bufferedReader); 
+		 } catch(XMLStreamException xse) { 
+			 logger.error(xse.getMessage());
+		 }
+}
+/**
+ * This method takes the reader as input and gets the handle to the parser
+ * to parse the reader.
+ * 
+ * @param reader
+ * @return
+ * @throws XMLStreamException
+ */
+
+ private void xmlFileReader(BufferedReader reader) throws XMLStreamException {
+	 XMLInputFactory factory =XMLInputFactory.newInstance(); 
+	 this.parser =factory.createXMLStreamReader(reader); 
+ }
+
+/**
+ * Credit Report Responses file doesn't has any FILE level header.
+ * 
+ * @param
+ * @return String
+ * @throws IOException
+ */
+public String readHeader() throws RecordReaderException {
+	return null;
+}
+
+/**
+ * Credit Report Responses file doesn't has any FILE level footer.
+ * 
+ * @param
+ * @return String
+ * @throws IOException
+ */
+public String readFooter() throws RecordReaderException {
+	return null;
+}
+
+ /**
+ * This method actually reads the reader sets the root elemts, common data and end tag of root elent and set it to instance varaibles
+ * for common use. It also parses the reader further down and gets repeating record and attaches to the root and common elements. This 
+ * will be called from readRecord method multiple times until the end of the reader.
+ * @param reader
+ * @return String
+ * @throws XMLStreamException
+ */
+private String xmlReadRecord() throws XMLStreamException {
+        
+      StringBuffer recordSB = new StringBuffer();            
+      StringBuffer documentSB = new StringBuffer();
+      
+  for (int event = parser.next(); event != XMLStreamConstants.END_DOCUMENT; event = parser.next()) {
+      
+      switch (event) {
+          case XMLStreamConstants.START_ELEMENT:
+          if(!(parser.getLocalName().equals(recordName) || parser.getLocalName().equals(addressElementName) || parser.getLocalName().equals(customerElementName)) && rootElement){
+              startSB.append("<");
+              startSB.append(getName(parser));
+              startSB.append(getNamespaces(parser));
+              startSB.append(getAttributes(parser));
+              startSB.append(">");
+              endSB.append("</");
+              endSB.append(getName(parser));
+              endSB.append(">");
+              rootElement = false;                        
+          }else if (parser.getLocalName().equals(recordName) || inBetween) {
+              recordSB.append("<");                        
+              recordSB.append(getName(parser));
+              recordSB.append(getNamespaces(parser));                        
+              recordSB.append(">");
+              if(parser.getLocalName().trim().equalsIgnoreCase(fulCode)){
+                  foundFulCodeNode=true;
+              }
+              inBetween = true;                    
+          }else if((parser.getLocalName().equals(addressElementName) || parser.getLocalName().equals(customerElementName))||  commonInBetween){
+              startSB.append("<");
+              startSB.append(getName(parser));
+              startSB.append(getNamespaces(parser));
+              startSB.append(getAttributes(parser));
+              startSB.append(">");  
+              commonInBetween = true;                                                      
+          }
+          else {
+              startSB.append("<");
+              startSB.append(getName(parser));
+              startSB.append(getNamespaces(parser));
+              startSB.append(getAttributes(parser));
+              startSB.append(">");                  
+              commonInBetween = true;                                                      
+              commonElements = true;
+          }break;
+
+          case XMLStreamConstants.END_ELEMENT:
+          if (inBetween){
+        	  logger.debug("in end element of inBetween");
+              recordSB.append("</");
+              recordSB.append(getName(parser));
+              recordSB.append(">");
+              if(parser.getLocalName().trim().equalsIgnoreCase(fulCode)){
+                  foundFulCodeNode=false;
+              }
+           }
+          if (commonInBetween) {
+              startSB.append("</");
+              startSB.append(getName(parser));
+              startSB.append(">");
+              commonInBetween = false;
+          }else if (commonElements) {
+              startSB.append("</");
+              startSB.append(getName(parser));
+              startSB.append(">");
+              commonElements = false;
+          }
+           if (parser.getLocalName().equals(recordName)) {
+              documentSB.append(startSB);
+              documentSB.append(recordSB);
+              documentSB.append(endSB);
+              return documentSB.toString();                        
+          }
+          break;
+          
+          default:
+              if (inBetween){
+                  recordSB.append(FileProcessorUtil.escapeText(parser.getText()));
+              }
+              if(commonInBetween && commonElements) {
+                  startSB.append(FileProcessorUtil.escapeText(parser.getText()));                        
+              }
+          break;
+      }
+  }
+  parser.close();
+  return null;
+}
+  
+  /**
+	 * This method takes the xml fragment and returns all the attributes in that
+	 * fragment with values.
+	 * 
+	 * @param xmlr
+	 * @return String
+	 * @throws XMLStreamException
+	 */
+	private String getAttributes(XMLStreamReader xmlr) {
+		StringBuffer sb = new StringBuffer();
+		for (int i = 0; i < xmlr.getAttributeCount(); i++) {
+			sb.append(" ").append(getAttribute(xmlr, i));
+		}
+		return sb.toString();
+	}
+
+	/**
+	 * This method takes the xml fragment and returns each attribute in that
+	 * fragment with values. This method also validates the attributes if the
+	 * attribute name equals to referenceNumber, fluCode, memberNumber and
+	 * serviceCode.
+	 */
+	private String getAttribute(XMLStreamReader xmlr, int i) {
+		StringBuffer sb = new StringBuffer();
+		String prefix = xmlr.getAttributePrefix(i);
+		String local = xmlr.getAttributeLocalName(i);
+		String value = xmlr.getAttributeValue(i);
+		if (prefix != null && !prefix.trim().equals("")) {
+			sb.append(prefix).append(":");
+		}
+		sb.append(local);
+		sb.append("=").append("\"").append(value).append("\"");
+		if (local.equals("referenceNumber") || local.equals("fulCode") || local.equals("memberNumber") || local.equals("serviceCode")) {
+			validateRecord(local, value);
+		}
+		return sb.toString();
+	}
+
+	/**
+	 * This method takes the xml fragment and returns the name.
+	 * 
+	 * @param xmlr
+	 * @return String
+	 * @throws XMLStreamException
+	 */
+	private String getName(XMLStreamReader xmlr) {
+		StringBuffer sb = new StringBuffer();
+		String prefix = xmlr.getPrefix();
+		String local = xmlr.getLocalName();
+		if (prefix != null && !prefix.trim().equals("")) {
+			sb.append(prefix).append(":");
+		}
+		if (prefix != null && prefix.trim().equalsIgnoreCase("com")) {
+			sb.replace(0, 3, "c");
+		}
+		if (local != null && !local.trim().equals("")) {
+			sb.append(local);
+		}
+		return sb.toString();
+	}
+
+	/**
+	 * This method takes the xml fragment and returns all the namespaces.
+	 * 
+	 * @param xmlr
+	 * @return String
+	 * @throws XMLStreamException
+	 */
+	private String getNamespaces(XMLStreamReader xmlr) {
+		StringBuffer sb = new StringBuffer();
+		for (int i = 0; i < xmlr.getNamespaceCount(); i++) {
+			sb.append(" ").append(getNamespace(xmlr, i));
+		}
+		return sb.toString();
+	}
+
+	/**
+	 * This method takes the xml fragment and returns the namespace.
+	 * 
+	 * @param xmlr
+	 * @return String
+	 * @throws XMLStreamException
+	 */
+	private String getNamespace(XMLStreamReader xmlr, int i) {
+		StringBuffer sb = new StringBuffer();
+		String prefix = xmlr.getNamespacePrefix(i);
+		String uri = xmlr.getNamespaceURI(i);
+		if (prefix == null) {
+			sb.append("xmlns=\"").append(uri).append("\"");
+		}
+		// Change com to c
+		else if (prefix.equalsIgnoreCase("com")) {
+			sb.append("xmlns:").append("c").append("=\"").append(uri).append("\"");
+		} else {
+			sb.append("xmlns:").append(prefix).append("=\"").append(uri).append("\"");
+		}
+		return sb.toString();
+	}
+	
+	/**
+	 * This method validates the referenceNumber, fluCode, memberNumber and
+	 * serviceCode and sets the validation erroors into recordErrors buffer.
+	 */
+	private void validateRecord(String name, String value) {
+		String refNumberValidate = null;
+		String fluCodeValidate = null;
+		String memberNumberValidate = null;
+		String serviceCodeValidate = null;
+
+		if (name.equals("referenceNumber")) {
+			refNumberValidate = CommonValidationUtil.validateReferenceNumber(value);
+			if (!refNumberValidate.equals("valid")) {
+				this.recordErrors.append(refNumberValidate);
+			}
+		}
+		if (name.equals("fulCode")) {
+			fluCodeValidate = CommonValidationUtil.validateFulCode(value);
+			if (!fluCodeValidate.equals("valid")) {
+				this.recordErrors.append(" " + fluCodeValidate);
+			}
+		}
+		if (name.equals("memberNumber")) {
+			memberNumberValidate = CommonValidationUtil.validateMemberNumber(value);
+			if (!memberNumberValidate.equals("valid")) {
+				this.recordErrors.append(" " + memberNumberValidate);
+			}
+		}
+		if (name.equals("serviceCode")) {
+			serviceCodeValidate = CommonValidationUtil.validateServiceCode(value);
+			if (!serviceCodeValidate.equals("valid")) {
+				this.recordErrors.append(" " + serviceCodeValidate + ". ");
+			}
+		}
+	}
+
+}
